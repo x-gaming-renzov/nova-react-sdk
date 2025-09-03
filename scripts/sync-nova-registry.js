@@ -6,8 +6,6 @@ const fetch = require("node-fetch");
 const CONFIG = {
   // These should come from environment variables
   NOVA_API_ENDPOINT: process.env.NOVA_API_ENDPOINT || "https://api.nova.com",
-  NOVA_ORG_ID: process.env.NOVA_ORG_ID,
-  NOVA_APP_ID: process.env.NOVA_APP_ID,
   NOVA_API_KEY: process.env.NOVA_API_KEY,
 
   // File paths to scan for registerNovaObject calls
@@ -151,8 +149,6 @@ class NovaRegistrySync {
     const registryData = {
       metadata: {
         generatedAt: new Date().toISOString(),
-        orgId: CONFIG.NOVA_ORG_ID,
-        appId: CONFIG.NOVA_APP_ID,
         version: this.getPackageVersion(),
         totalObjects: this.registry.length,
       },
@@ -179,22 +175,15 @@ class NovaRegistrySync {
   }
 
   // Sync registry to Nova backend
-  async syncToBackend(registryData) {
-    if (!CONFIG.NOVA_API_KEY) {
-      throw new Error("NOVA_API_KEY environment variable is required");
-    }
-
-    if (!CONFIG.NOVA_ORG_ID || !CONFIG.NOVA_APP_ID) {
-      throw new Error(
-        "NOVA_ORG_ID and NOVA_APP_ID environment variables are required"
-      );
+  async syncToBackend(registryData, syncKey) {
+    if (!syncKey) {
+      throw new Error("Sync API key is required");
     }
 
     console.log("🚀 Syncing registry to Nova backend...");
 
     const payload = {
-      organisationId: CONFIG.NOVA_ORG_ID,
-      appId: CONFIG.NOVA_APP_ID,
+      // organisationId and appId must NOT be supplied; server infers from sync key
       metadata: registryData.metadata,
       objects: registryData.objects.map((obj) => ({
         name: obj.name,
@@ -211,7 +200,7 @@ class NovaRegistrySync {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${CONFIG.NOVA_API_KEY}`,
+            "X-API-Key": syncKey,
             "X-Nova-Version": "1.0.0",
           },
           body: JSON.stringify(payload),
@@ -255,7 +244,12 @@ class NovaRegistrySync {
       const registryData = this.saveRegistryFile();
 
       // 3. Sync to backend
-      await this.syncToBackend(registryData);
+      const syncKey = await resolveSyncKey();
+      if (!syncKey) {
+        throw new Error("Sync key not provided. Run with --sync-key <key> or pipe key to stdin.");
+      }
+
+      await this.syncToBackend(registryData, syncKey);
 
       // 4. Report errors if any
       if (this.errors.length > 0) {

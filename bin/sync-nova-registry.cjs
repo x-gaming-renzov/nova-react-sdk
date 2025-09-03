@@ -22,15 +22,13 @@ class NovaSync {
   // Load configuration from multiple sources
   loadConfig() {
     const config = {
-      orgId: null,
-      appId: null,
+  // org/app are no longer required; server infers them from the sync API key
       apiKey: null,
       apiEndpoint: "https://api.nova.com",
     };
 
     // 1. Try environment variables
-    config.orgId = process.env.NOVA_ORG_ID;
-    config.appId = process.env.NOVA_APP_ID;
+  // sync API key may be provided via env but we prefer CLI arg or stdin
     config.apiKey = process.env.NOVA_API_KEY;
     config.apiEndpoint = process.env.NOVA_API_ENDPOINT || config.apiEndpoint;
 
@@ -83,13 +81,8 @@ class NovaSync {
     }
 
     // Validate required config
-    if (!this.config.orgId || !this.config.appId || !this.config.apiKey) {
-      const missing = [];
-      if (!this.config.orgId) missing.push("NOVA_ORG_ID");
-      if (!this.config.appId) missing.push("NOVA_APP_ID");
-      if (!this.config.apiKey) missing.push("NOVA_API_KEY");
-
-      throw new Error(`Missing required configuration: ${missing.join(", ")}`);
+    if (!this.config.apiKey) {
+      throw new Error(`Missing required configuration: NOVA_API_KEY (or pass --sync-key)`);
     }
   }
 
@@ -139,8 +132,6 @@ class NovaSync {
     const registryData = {
       metadata: {
         generatedAt: new Date().toISOString(),
-        orgId: this.config.orgId,
-        appId: this.config.appId,
         version: this.getPackageVersion(),
         totalObjects: Object.keys(this.objects).length,
       },
@@ -166,8 +157,7 @@ class NovaSync {
     console.log("🚀 Syncing to Nova backend...");
 
     const payload = {
-      organisation_id: this.config.orgId,
-      app_id: this.config.appId,
+      // organisation_id and app_id must NOT be supplied; server infers from the API key
       objects: this.objects,
       experiences: this.experiences,
     };
@@ -178,7 +168,7 @@ class NovaSync {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.apiKey}`,
+          "X-API-Key": this.config.apiKey,
         },
         body: JSON.stringify(payload),
       }
@@ -237,9 +227,7 @@ Required:
 
 Configuration (optional):
   Environment variables:
-    NOVA_ORG_ID=your-org-id
-    NOVA_APP_ID=your-app-id  
-    NOVA_API_KEY=your-api-key
+  NOVA_API_KEY=your-api-key
 
 Example nova-objects.json:
   {
@@ -260,4 +248,37 @@ Example nova-objects.json:
 
 // Run the sync
 const sync = new NovaSync();
-sync.run();
+// Resolve sync key from CLI arg (--sync-key or -k) or stdin if piped
+async function resolveSyncKeyCli() {
+  const argv = process.argv.slice(2);
+
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--sync-key" || a === "-k") {
+      return (argv[i + 1] || "").trim();
+    }
+    if (a.startsWith("--sync-key=")) {
+      return a.split("=")[1].trim();
+    }
+  }
+
+  // If piped
+  if (!process.stdin.isTTY) {
+    let data = "";
+    for await (const chunk of process.stdin) {
+      data += chunk;
+    }
+    if (data && data.trim()) return data.trim();
+  }
+
+  return null;
+}
+
+(async () => {
+  const key = await resolveSyncKeyCli();
+  if (key) {
+    sync.config.apiKey = key;
+  }
+
+  await sync.run();
+})();

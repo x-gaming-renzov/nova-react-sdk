@@ -7,8 +7,10 @@ import React, {
 import { callApi } from "../service/api";
 
 export interface NovaConfig {
-  organisationId: string;
-  appId: string;
+  // organisationId and appId are no longer required; server infers them from API keys.
+  // Raw client API key (branded as novaApiKey). This will be sent as X-API-Key
+  // on every client request that requires project context.
+  novaApiKey: string;
   apiEndpoint: string;
   registry: {
     objects: {
@@ -287,13 +289,18 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
 
   const setUser = useCallback(
     async (user: SetNovaUser) => {
+      if (!state.config.novaApiKey) {
+        throw new Error("novaApiKey is required in NovaConfig");
+      }
+
       const userResponse = await callApi<{ nova_user_id: string }>(
         `${state.config.apiEndpoint}/api/v1/users/create-user/`,
         {
           method: "POST",
+          headers: {
+            "X-API-Key": state.config.novaApiKey,
+          },
           body: JSON.stringify({
-            organisation_id: state.config.organisationId,
-            app_id: state.config.appId,
             user_id: user.userId,
             user_profile: user.userProfile,
           }),
@@ -321,13 +328,18 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
 
       dispatch({ type: "UPDATE_USER_PROFILE", payload: userProfile });
 
+      if (!state.config.novaApiKey) {
+        throw new Error("novaApiKey is required in NovaConfig");
+      }
+
       await callApi<{ nova_user_id: string }>(
         `${state.config.apiEndpoint}/api/v1/users/update-user-profile/`,
         {
           method: "POST",
+          headers: {
+            "X-API-Key": state.config.novaApiKey,
+          },
           body: JSON.stringify({
-            organisation_id: state.config.organisationId,
-            app_id: state.config.appId,
             user_id: state.user.novaUserId,
             user_profile: userProfile,
           }),
@@ -348,13 +360,18 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
+        if (!state.config.novaApiKey) {
+          throw new Error("novaApiKey is required in NovaConfig");
+        }
+
         const data = await callApi<NovaExperienceResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experience/`,
           {
             method: "POST",
+            headers: {
+              "X-API-Key": state.config.novaApiKey,
+            },
             body: JSON.stringify({
-              organisation_id: state.config.organisationId,
-              app_id: state.config.appId,
               user_id: state.user.novaUserId,
               experience_name: experienceName,
             }),
@@ -412,13 +429,18 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
+        if (!state.config.novaApiKey) {
+          throw new Error("novaApiKey is required in NovaConfig");
+        }
+
         const data = await callApi<GetExperiencesResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experiences/`,
           {
             method: "POST",
+            headers: {
+              "X-API-Key": state.config.novaApiKey,
+            },
             body: JSON.stringify({
-              organisation_id: state.config.organisationId,
-              app_id: state.config.appId,
               user_id: state.user.novaUserId,
               experience_names: experienceNames,
             }),
@@ -517,20 +539,18 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   // Analytics methods
   const trackEvent = useCallback(
     async (eventName: string, eventData?: Record<string, any>) => {
-      if (
-        !state.config.organisationId ||
-        !state.config.appId ||
-        !state.user?.novaUserId
-      )
+      if (!state.config.novaApiKey || !state.user?.novaUserId) {
         return;
+      }
 
       await callApi<{ event_id: string }>(
         `${state.config.apiEndpoint}/api/v1/metrics/track-event/`,
         {
           method: "POST",
+          headers: {
+            "X-API-Key": state.config.novaApiKey,
+          },
           body: JSON.stringify({
-            organisation_id: state.config.organisationId,
-            app_id: state.config.appId,
             user_id: state.user.novaUserId,
             event_name: eventName,
             event_data: eventData || {},
