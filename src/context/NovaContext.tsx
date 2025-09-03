@@ -7,8 +7,7 @@ import React, {
 import { callApi } from "../service/api";
 
 export interface NovaConfig {
-  organisationId: string;
-  appId: string;
+  // organisationId and appId are no longer required; server infers them from API keys.
   // Raw client API key (branded as novaApiKey). This will be sent as X-API-Key
   // on every client request that requires project context.
   novaApiKey: string;

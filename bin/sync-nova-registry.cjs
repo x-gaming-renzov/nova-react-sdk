@@ -22,15 +22,13 @@ class NovaSync {
   // Load configuration from multiple sources
   loadConfig() {
     const config = {
-      orgId: null,
-      appId: null,
+  // org/app are no longer required; server infers them from the sync API key
       apiKey: null,
       apiEndpoint: "https://api.nova.com",
     };
 
     // 1. Try environment variables
-    config.orgId = process.env.NOVA_ORG_ID;
-    config.appId = process.env.NOVA_APP_ID;
+  // sync API key may be provided via env but we prefer CLI arg or stdin
     config.apiKey = process.env.NOVA_API_KEY;
     config.apiEndpoint = process.env.NOVA_API_ENDPOINT || config.apiEndpoint;
 
@@ -134,8 +132,6 @@ class NovaSync {
     const registryData = {
       metadata: {
         generatedAt: new Date().toISOString(),
-        orgId: this.config.orgId,
-        appId: this.config.appId,
         version: this.getPackageVersion(),
         totalObjects: Object.keys(this.objects).length,
       },
@@ -231,9 +227,7 @@ Required:
 
 Configuration (optional):
   Environment variables:
-    NOVA_ORG_ID=your-org-id
-    NOVA_APP_ID=your-app-id  
-    NOVA_API_KEY=your-api-key
+  NOVA_API_KEY=your-api-key
 
 Example nova-objects.json:
   {
