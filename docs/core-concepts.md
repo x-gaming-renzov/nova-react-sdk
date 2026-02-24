@@ -1,59 +1,64 @@
-## Core concepts
+## Core concepts and provider setup
 
-### Organisation and App
+### Key terms
 
-All API calls require `organisationId` and `appId`. These identify the tenant and product/workspace.
+**Experience** — a named container (e.g. `"onboarding_flow"`, `"landing"`). Each experience gets assigned a personalisation by the backend based on the user's profile. An experience groups one or more objects.
 
-### Registry
+**Object** — a configurable unit inside an experience (e.g. `"hero_banner"`, `"ui_theme"`). Each object has typed keys with defaults. After evaluation, the backend may override these with variant-specific values.
 
-A JSON definition of your UI objects and experiences. The SDK consumes this to compute safe defaults before network calls.
+**Registry** — a JSON blob you define in your app that declares all objects and experiences with their default values. The SDK uses this to render immediately (no loading spinner) before the backend responds.
 
-Example objects
+**User profile** — key-value attributes about the user (`country`, `plan`, `ltv`, etc.). The backend uses these to evaluate segment rules and assign personalisations.
 
-```json
-{
-	"objects": {
-		"ui-theme": {
-			"type": "ui",
-			"keys": {
-				"text_color": {
-					"type": "string",
-					"description": "Primary text color",
-					"default": "#222"
-				},
-				"accent_color": {
-					"type": "string",
-					"description": "Accent color",
-					"default": "#ff6b6b"
-				}
-			}
-		}
-	}
-}
+### How evaluation works
+
+1. You define objects and experiences in your registry JSON (with defaults)
+2. On app start, the SDK populates state with those defaults — UI renders instantly
+3. You call `setUser` to register the user with Nova
+4. You call `loadExperience(s)` — the backend evaluates rules against the user's profile
+5. Server values merge into state, replacing defaults where applicable
+6. Components re-render with the personalised values
+
+### Authentication
+
+All API calls use an **SDK API key** (`nova_sk_...`). The backend extracts your organisation and app IDs from the key using HMAC — no database lookup, sub-millisecond auth.
+
+You never need to pass `organisationId` or `appId` anywhere. The API key carries that information.
+
+### Provider setup
+
+Wrap your app with `NovaProvider`:
+
+```tsx
+import { NovaProvider } from "nova-react-sdk";
+import registry from "./nova-objects.json";
+
+<NovaProvider
+  config={{
+    apiKey: "nova_sk_...",
+    apiEndpoint: "https://your-api.example.com",
+    registry,
+  }}
+>
+  <App />
+</NovaProvider>
 ```
 
-### User and Profile
+Config fields:
 
-Your external `userId` plus a flexible `userProfile` (key-value). Rules like segments and personalisations are evaluated against these attributes.
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `apiKey` | `string` | yes | Your SDK API key (`nova_sk_...`) |
+| `apiEndpoint` | `string` | yes | Nova Manager base URL |
+| `registry` | `object` | yes | Objects and experiences definition (see [registry.md](./registry.md)) |
+| `eventBatch` | `object` | no | Tune event batching (see [events.md](./events.md)) |
 
-### Experience
+### React Native
 
-A named context (e.g., `landing`, `theme`). Each experience references one or more objects.
+- Pass config values directly (no `process.env` in RN by default)
+- Make sure `apiEndpoint` is reachable from the device/emulator (use LAN IP for local dev)
 
-### Object
+### Next.js / SSR
 
-A named configurable unit (e.g., `ui-theme`). Contains typed keys with defaults. After evaluation, the SDK merges server-provided overrides over these defaults.
-
-### Evaluation
-
-- `setUser` registers/updates the user.
-- `loadExperience(s)` asks backend for personalised variants.
-- `useNovaExperience` exposes evaluated object configs to your components.
-
-Mapping to SDK
-
-- Provider config: `organisationId`, `appId`, `apiEndpoint`, `registry`
-- `setUser({ userId, userProfile })`
-- `loadExperience("landing")` or `loadAllExperiences()`
-- `useNovaExperience("landing")`
-- `trackEvent("EventName", { ... })`
+- Use `NovaProvider` in client components only
+- Call `setUser` and `loadExperience(s)` inside `useEffect`, not during server render

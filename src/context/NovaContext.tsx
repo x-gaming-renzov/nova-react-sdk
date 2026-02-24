@@ -1,15 +1,22 @@
 import React, {
   createContext,
   useReducer,
+  useRef,
+  useEffect,
   ReactNode,
   useCallback,
 } from "react";
 import { callApi } from "../service/api";
 
+export interface NovaEventBatchConfig {
+  maxSize?: number;       // flush when queue reaches this size (default: 10)
+  flushInterval?: number; // flush every N milliseconds (default: 5000)
+}
+
 export interface NovaConfig {
-  organisationId: string;
-  appId: string;
+  apiKey: string;
   apiEndpoint: string;
+  eventBatch?: NovaEventBatchConfig;
   registry: {
     objects: {
       [objectName: string]: {
@@ -40,7 +47,7 @@ export interface NovaUser {
   userId: string;
   userProfile: UserProfile;
 
-  novaUserId: string;
+  novaUserId?: string;
 }
 
 export interface SetNovaUser {
@@ -146,7 +153,8 @@ export interface NovaContextValue {
   trackEvent: (
     eventName: string,
     eventData?: Record<string, any>
-  ) => Promise<void>;
+  ) => void;
+  flushEvents: () => Promise<void>;
 }
 
 export const NovaContext = createContext<NovaContextValue | undefined>(
@@ -291,20 +299,17 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         `${state.config.apiEndpoint}/api/v1/users/create-user/`,
         {
           method: "POST",
+          headers: {
+            Authorization: `Bearer ${state.config.apiKey}`,
+          },
           body: JSON.stringify({
-            organisation_id: state.config.organisationId,
-            app_id: state.config.appId,
             user_id: user.userId,
             user_profile: user.userProfile,
           }),
         }
       );
 
-      if (!userResponse.nova_user_id) {
-        throw new Error("Nova user id not found");
-      }
-
-      const payload = {
+      const payload: NovaUser = {
         userId: user.userId,
         userProfile: user.userProfile,
         novaUserId: userResponse.nova_user_id,
@@ -325,10 +330,11 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         `${state.config.apiEndpoint}/api/v1/users/update-user-profile/`,
         {
           method: "POST",
+          headers: {
+            Authorization: `Bearer ${state.config.apiKey}`,
+          },
           body: JSON.stringify({
-            organisation_id: state.config.organisationId,
-            app_id: state.config.appId,
-            user_id: state.user.novaUserId,
+            user_id: state.user.userId,
             user_profile: userProfile,
           }),
         }
@@ -352,10 +358,11 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experience/`,
           {
             method: "POST",
+            headers: {
+              Authorization: `Bearer ${state.config.apiKey}`,
+            },
             body: JSON.stringify({
-              organisation_id: state.config.organisationId,
-              app_id: state.config.appId,
-              user_id: state.user.novaUserId,
+              user_id: state.user.userId,
               experience_name: experienceName,
             }),
           }
@@ -416,10 +423,11 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experiences/`,
           {
             method: "POST",
+            headers: {
+              Authorization: `Bearer ${state.config.apiKey}`,
+            },
             body: JSON.stringify({
-              organisation_id: state.config.organisationId,
-              app_id: state.config.appId,
-              user_id: state.user.novaUserId,
+              user_id: state.user.userId,
               experience_names: experienceNames,
             }),
           }
@@ -514,33 +522,79 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     [state.experiences]
   );
 
-  // Analytics methods
-  const trackEvent = useCallback(
-    async (eventName: string, eventData?: Record<string, any>) => {
-      if (
-        !state.config.organisationId ||
-        !state.config.appId ||
-        !state.user?.novaUserId
-      )
-        return;
+  // Analytics methods — batched event tracking
+  const batchMaxSize = config.eventBatch?.maxSize ?? 10;
+  const batchFlushInterval = config.eventBatch?.flushInterval ?? 5000;
 
-      await callApi<{ event_id: string }>(
-        `${state.config.apiEndpoint}/api/v1/metrics/track-event/`,
+  interface QueuedEvent {
+    event_name: string;
+    event_data: Record<string, any>;
+    timestamp: string;
+  }
+
+  const eventQueueRef = useRef<QueuedEvent[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushEvents = useCallback(async () => {
+    const queue = eventQueueRef.current;
+    if (queue.length === 0) return;
+    if (!state.config.apiKey || !state.user?.userId) return;
+
+    // Drain the queue
+    const events = queue.splice(0, queue.length);
+
+    try {
+      await callApi<{ success: boolean; count: number }>(
+        `${state.config.apiEndpoint}/api/v1/metrics/track-events/`,
         {
           method: "POST",
+          headers: {
+            Authorization: `Bearer ${state.config.apiKey}`,
+          },
           body: JSON.stringify({
-            organisation_id: state.config.organisationId,
-            app_id: state.config.appId,
-            user_id: state.user.novaUserId,
-            event_name: eventName,
-            event_data: eventData || {},
-            timestamp: new Date().toISOString(),
+            user_id: state.user.userId,
+            events,
           }),
         }
       );
+    } catch {
+      // Put events back at the front of the queue for retry on next flush
+      eventQueueRef.current.unshift(...events);
+    }
+  }, [state.config, state.user?.userId]);
+
+  const trackEvent = useCallback(
+    (eventName: string, eventData?: Record<string, any>) => {
+      if (!state.config.apiKey || !state.user?.userId) return;
+
+      eventQueueRef.current.push({
+        event_name: eventName,
+        event_data: eventData || {},
+        timestamp: new Date().toISOString(),
+      });
+
+      // Flush immediately if queue reached max size
+      if (eventQueueRef.current.length >= batchMaxSize) {
+        flushEvents();
+      }
     },
-    [state.config, state.user?.novaUserId]
+    [state.config, state.user?.userId, batchMaxSize, flushEvents]
   );
+
+  // Flush on interval
+  useEffect(() => {
+    flushTimerRef.current = setInterval(() => {
+      flushEvents();
+    }, batchFlushInterval);
+
+    return () => {
+      if (flushTimerRef.current) {
+        clearInterval(flushTimerRef.current);
+      }
+      // Flush remaining events on unmount
+      flushEvents();
+    };
+  }, [flushEvents, batchFlushInterval]);
 
   const value: NovaContextValue = {
     state,
@@ -561,6 +615,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     getExperience,
 
     trackEvent,
+    flushEvents,
   };
 
   return <NovaContext.Provider value={value}>{children}</NovaContext.Provider>;

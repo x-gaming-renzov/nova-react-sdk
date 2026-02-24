@@ -7,6 +7,7 @@ export { useNova, useNovaExperience, useNovaInit } from "./hooks/useNova";
 // Type exports for consumers
 export type {
   NovaConfig,
+  NovaEventBatchConfig,
   NovaUser,
   SetNovaUser,
   UserProfile,

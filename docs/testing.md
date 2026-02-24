@@ -1,48 +1,76 @@
-## Testing the SDK integration
+## Testing
 
-### Component testing
+### Component tests
 
-Use `NovaProvider` with a minimal config and mock `fetch` to control responses.
+Wrap components in `NovaProvider` with a test config and mock `fetch`:
 
 ```tsx
 import { render, screen } from "@testing-library/react";
 import { NovaProvider } from "nova-react-sdk";
-import NovaRegistry from "../nova-objects.json";
+import registry from "../nova-objects.json";
 import MyComponent from "./MyComponent";
 
 beforeEach(() => {
-	// simple fetch mock
-	global.fetch = jest
-		.fn()
-		.mockResolvedValue({ ok: true, json: async () => ({}) });
+  global.fetch = jest
+    .fn()
+    .mockResolvedValue({ ok: true, json: async () => ({}) });
 });
 
-test("renders landing experience", async () => {
-	render(
-		<NovaProvider
-			config={{
-				organisationId: "org",
-				appId: "app",
-				apiEndpoint: "http://localhost:8000",
-				registry: NovaRegistry,
-			}}
-		>
-			<MyComponent />
-		</NovaProvider>
-	);
+test("renders with registry defaults", async () => {
+  render(
+    <NovaProvider
+      config={{
+        apiKey: "test-key",
+        apiEndpoint: "http://localhost:8000",
+        registry,
+      }}
+    >
+      <MyComponent />
+    </NovaProvider>
+  );
 
-	// assert on default configs from registry or mocked API
-	expect(await screen.findByText(/Nova Legends/i)).toBeInTheDocument();
+  // Registry defaults render without any API call
+  expect(screen.getByText("Welcome")).toBeInTheDocument();
+});
+```
+
+### Mocking API responses
+
+To test with server-assigned values, mock the fetch response:
+
+```tsx
+global.fetch = jest.fn().mockResolvedValue({
+  ok: true,
+  json: async () => ({
+    experience_id: "exp-1",
+    personalisation_name: "kr-premium",
+    evaluation_reason: "segment_match",
+    features: {
+      hero_banner: {
+        feature_id: "f-1",
+        feature_name: "hero_banner",
+        variant_id: "v-1",
+        variant_name: "variant_a",
+        config: { title: "Premium Welcome", show_cta: true },
+      },
+    },
+  }),
 });
 ```
 
 ### Hook testing
 
-- Prefer testing components that consume the hook
-- For `useNovaExperience`, render a test component that calls it and displays a value
+Test components that consume the hook rather than testing the hook directly:
+
+```tsx
+function TestComponent() {
+  const { objects, loaded } = useNovaExperience("landing");
+  return <div>{loaded ? objects?.hero_banner?.title : "loading"}</div>;
+}
+```
 
 ### E2E
 
-- Seed server with known experiences/objects
+- Seed the backend with known experiences and objects
 - Use a stable test user profile
-- Verify `trackEvent` side effects via your analytics store
+- Verify `trackEvent` writes by checking analytics (events are batched, so call `flushEvents` before asserting)

@@ -13,8 +13,8 @@
     "build": "rollup -c",
     "dev": "rollup -c -w",
     "prepare": "npm run build",
-    "nova:sync": "node scripts/sync-nova-registry.js",
-    "nova:check": "node scripts/sync-nova-registry.js --dry-run"
+    "nova:sync": "node bin/sync-nova-registry.cjs",
+    "nova:check": "node bin/sync-nova-registry.cjs --dry-run"
   },
   "bin": {
     "nova-sync": "./bin/sync-nova-registry.cjs"

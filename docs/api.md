@@ -1,6 +1,6 @@
-## SDK API reference
+## API reference
 
-Exports
+### Exports
 
 ```ts
 // Provider and context
@@ -11,82 +11,137 @@ export { useNova, useNovaExperience, useNovaInit };
 
 // Types
 export type {
-	NovaConfig,
-	NovaUser,
-	SetNovaUser,
-	UserProfile,
-	NovaObject,
-	NovaObjectConfig,
-	NovaExperience,
-	NovaExperiences,
-	NovaState,
-	NovaContextValue,
+  NovaConfig,
+  NovaEventBatchConfig,
+  NovaUser,
+  SetNovaUser,
+  UserProfile,
+  NovaObject,
+  NovaObjectConfig,
+  NovaExperience,
+  NovaExperiences,
+  NovaState,
+  NovaContextValue,
 };
 ```
 
-Config
+### NovaConfig
 
 ```ts
 interface NovaConfig {
-	organisationId: string;
-	appId: string;
-	apiEndpoint: string;
-	registry: {
-		objects: {
-			[objectName: string]: {
-				type: string;
-				keys: {
-					[keyName: string]: {
-						type: string;
-						description: string;
-						default: any;
-					};
-				};
-			};
-		};
-		experiences: {
-			[experienceName: string]: {
-				description: string;
-				objects: { [objectName: string]: boolean };
-			};
-		};
-	};
+  apiKey: string;
+  apiEndpoint: string;
+  eventBatch?: NovaEventBatchConfig;
+  registry: {
+    objects: {
+      [objectName: string]: {
+        type: string;
+        keys: {
+          [keyName: string]: {
+            type: string;
+            description: string;
+            default: any;
+          };
+        };
+      };
+    };
+    experiences: {
+      [experienceName: string]: {
+        description: string;
+        objects: { [objectName: string]: boolean };
+      };
+    };
+  };
 }
 ```
 
-Context methods (via `useNova`)
+### NovaEventBatchConfig
 
-- `setUser(user: { userId: string; userProfile: Record<string, any> }) => Promise<void>`
-  - Creates/updates a user; stores Nova user id internally.
-- `updateUserProfile(userProfile: Record<string, any>) => Promise<void>`
-  - Merges locally; persists to backend.
-- `loadExperience(name: string) => Promise<void>`
-  - Loads a single experience; merges overrides into state.
-- `loadExperiences(names: string[] | null) => Promise<void>`
-  - Loads selected or all experiences if `null`.
-- `loadAllExperiences() => Promise<void>`
-- `isExperienceLoaded(name: string) => boolean`
-- `readExperience<T>(name: string) => T | null`
-  - Returns current configs without triggering a load.
-- `getExperience<T>(name: string) => Promise<T | null>`
-  - Loads if needed, then returns configs.
-- `trackEvent(eventName: string, eventData?: Record<string, any>) => Promise<void>`
-  - Sends an analytics event with current Nova user id.
+```ts
+interface NovaEventBatchConfig {
+  maxSize?: number;       // flush at this queue size (default: 10)
+  flushInterval?: number; // flush interval in ms (default: 5000)
+}
+```
 
-Hook: `useNovaExperience<T>(experienceName: string)`
-Returns
+### NovaUser
+
+```ts
+interface NovaUser {
+  userId: string;
+  userProfile: Record<string, any>;
+  novaUserId?: string; // internal UUID, for debugging only
+}
+```
+
+### Context methods (via `useNova()`)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setUser` | `(user: SetNovaUser) => Promise<void>` | Register user with backend, store in state |
+| `updateUserProfile` | `(profile: UserProfile) => Promise<void>` | Merge new profile fields, sync to backend |
+| `loadExperience` | `(name: string) => Promise<void>` | Fetch one experience from backend |
+| `loadExperiences` | `(names: string[] \| null) => Promise<void>` | Fetch multiple, or all if `null` |
+| `loadAllExperiences` | `() => Promise<void>` | Shortcut for `loadExperiences(null)` |
+| `isExperienceLoaded` | `(name: string) => boolean` | Check if server data has been fetched |
+| `readExperience` | `<T>(name: string) => T \| null` | Read current config values from state |
+| `getExperience` | `<T>(name: string) => Promise<T \| null>` | Load-if-needed, then read |
+| `trackEvent` | `(name: string, data?: Record<string, any>) => void` | Queue an analytics event (sync, no HTTP) |
+| `flushEvents` | `() => Promise<void>` | Force-send all queued events |
+| `setLoading` | `(loading: boolean) => void` | Manually set loading state |
+| `setError` | `(error: string \| null) => void` | Manually set error state |
+
+### useNovaExperience<T>(experienceName: string)
 
 ```ts
 {
-	objects: T | null;
-	loaded: boolean;
-	loading: boolean;
-	error: string | null;
-	load: () => Promise<void>;
-	get: () => Promise<void>;
+  objects: T | null;
+  loaded: boolean;
+  loading: boolean;
+  error: string | null;
+  load: () => Promise<void>;
+  get: () => Promise<void>;
 }
 ```
 
-Hook: `useNovaInit()`
+- `objects` — always available (defaults before load, server values after)
+- `loaded` — `false` until server call completes for this experience
+- `load` — triggers an API call
+- `get` — loads only if not already loaded
 
-- `{ isReady, loading, error }` — convenience for boot flows.
+### useNovaInit()
+
+```ts
+{
+  isReady: boolean;
+  loading: boolean;
+  error: string | null;
+}
+```
+
+Calls `loadAllExperiences()` on mount. `isReady` is `true` when experiences are populated.
+
+### NovaState
+
+```ts
+interface NovaState {
+  config: NovaConfig;
+  user: NovaUser | null;
+  isLoading: boolean;
+  error: string | null;
+  experiences: {
+    [experienceName: string]: {
+      personalisationName: string | null;
+      objects: {
+        [objectName: string]: {
+          config: Record<string, any>;
+          variantName: string | null;
+        };
+      };
+      evaluationReason: string | null;
+      isLoaded: boolean;
+      lastFetched?: Date;
+    };
+  };
+}
+```

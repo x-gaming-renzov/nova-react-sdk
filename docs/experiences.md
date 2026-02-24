@@ -1,82 +1,122 @@
 ## Experiences
 
-Experiences are named contexts that group your objects. You load them for the current user, and then read the evaluated object configs.
+Experiences are named containers that group your objects. You load them for the current user, and the SDK merges server-assigned variant configs over the registry defaults.
 
-Lifecycle
+### Lifecycle
 
-1. Provider sets defaults from registry
+1. Provider populates defaults from registry on mount
 2. `setUser` resolves
-3. `loadAllExperiences()` or `loadExperience(name)`
+3. `loadAllExperiences()` or `loadExperience(name)` fetches server values
 4. Components render with `useNovaExperience(name)`
 
-Load all or one
+### Loading experiences
 
 ```tsx
-const { loadAllExperiences, loadExperience } = useNova();
-await loadAllExperiences();
+const { loadExperience, loadExperiences, loadAllExperiences } = useNova();
+
+// Load one
 await loadExperience("landing");
+
+// Load specific ones
+await loadExperiences(["landing", "pricing_page"]);
+
+// Load all registered experiences
+await loadAllExperiences();
 ```
 
-Component hook example
+`loadAllExperiences` passes `null` to the backend, which returns all experiences for the app.
+
+### useNovaExperience hook
+
+The primary way to read experience data in components:
 
 ```tsx
 import { useNovaExperience } from "nova-react-sdk";
 
-const Landing = () => {
-	const { objects, loaded, loading, error, load } = useNovaExperience<{
-		"ftue-landing": {
-			game_title: string;
-			tagline: string;
-			username_placeholder: string;
-			cta_button: string;
-		};
-		"ui-theme": {
-			text_color: string;
-			accent_color: string;
-			card_radius: number;
-		};
-	}>("landing");
+function LandingScreen() {
+  const { objects, loaded, loading, error, load } = useNovaExperience<{
+    "hero_banner": {
+      title: string;
+      show_cta: boolean;
+      cta_color: string;
+    };
+    "ui_theme": {
+      text_color: string;
+      accent_color: string;
+    };
+  }>("landing");
 
-	// Defensive load for route-level components
-	useEffect(() => {
-		if (!loaded && !loading) load();
-	}, [loaded, loading, load]);
+  useEffect(() => {
+    if (!loaded && !loading) load();
+  }, [loaded, loading, load]);
 
-	if (loading && !loaded) return <Spinner />;
-	if (error) return <ErrorView message={error} />;
+  if (loading && !loaded) return <Spinner />;
+  if (error) return <ErrorView message={error} />;
 
-	const landingData = objects?.["ftue-landing"];
-	const theme = objects?.["ui-theme"];
+  const banner = objects?.["hero_banner"];
+  const theme = objects?.["ui_theme"];
 
-	return (
-		<section style={{ color: theme?.text_color }}>
-			<h1>{landingData?.game_title}</h1>
-			<p>{landingData?.tagline}</p>
-			<Button style={{ background: theme?.accent_color }}>
-				{landingData?.cta_button}
-			</Button>
-		</section>
-	);
-};
+  return (
+    <View style={{ backgroundColor: theme?.accent_color }}>
+      <Text style={{ color: theme?.text_color }}>{banner?.title}</Text>
+      {banner?.show_cta && <Button title="Get Started" />}
+    </View>
+  );
+}
 ```
 
-Programmatic access
+**Return values:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `objects` | `T \| null` | Config values (defaults before load, server values after) |
+| `loaded` | `boolean` | `true` after server data has been fetched |
+| `loading` | `boolean` | Global loading state |
+| `error` | `string \| null` | Error message if load failed |
+| `load` | `() => Promise<void>` | Trigger a server load |
+| `get` | `() => Promise<void>` | Load-if-needed (skips if already loaded) |
+
+### useNovaInit hook
+
+Load all experiences on mount. Useful at your app's entry point:
 
 ```tsx
-const { getExperience } = useNova();
-const theme = await getExperience<{ "ui-theme": { text_color: string } }>(
-	"theme"
-);
+function MainApp() {
+  const { isReady, loading, error } = useNovaInit();
+
+  if (loading) return <Spinner />;
+  if (error) return <ErrorScreen message={error} />;
+
+  return <NavigationContainer />;
+}
 ```
 
-Patterns
+After `useNovaInit` completes, any component using `useNovaExperience` will already have server values.
 
-- Global theming: put `ui-theme` under an experience like `theme` and read at app root
-- Route-level loads: call `loadExperience(routeName)` in route components
-- Performance: use `loadAllExperiences()` on app start for small registries
-- Caching: `getExperience` loads on first call, returns cached configs thereafter
+### Programmatic access
 
-Error handling
+```tsx
+const { readExperience, getExperience, isExperienceLoaded } = useNova();
 
-- Combine `error` from `useNovaExperience` with UI fallbacks
-- Wrap `loadExperience` in try/catch if triggering manually
+// Check if loaded
+isExperienceLoaded("landing"); // true/false
+
+// Read whatever is in state right now (defaults or loaded)
+const data = readExperience("landing");
+
+// Load-if-needed, then read
+const data = await getExperience("landing");
+```
+
+### Patterns
+
+- **Preload at startup**: Call `loadAllExperiences()` after `setUser` for small registries. All components get server values immediately.
+- **Lazy load per route**: Call `loadExperience(routeName)` in route-level components. Only fetches what's needed.
+- **Memoize derived values**: If you compute styles from object configs, use `useMemo` to avoid recalculation on every render.
+- **Check `isExperienceLoaded`**: Avoid redundant `loadExperience` calls if the data is already there.
+
+### Error handling
+
+- `useNovaExperience` exposes `error` for UI fallbacks
+- Wrap manual `loadExperience` calls in try/catch
+- If the backend is unreachable, registry defaults still render — the app doesn't break

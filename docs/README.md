@@ -1,54 +1,71 @@
 ## Nova React SDK
 
-A comprehensive, practical guide to integrating Nova into your React or React Native app. Start here, then follow the chapters in order.
+A React/React Native SDK for integrating Nova personalization, feature flags, and analytics into your app.
 
-### Who is this for?
+### What it does
 
-- Frontend engineers integrating personalization and experimentation
-- Teams adding runtime experience evaluation and analytics
+1. **Identify users** — register users and their profile attributes with Nova
+2. **Evaluate experiences** — get personalised feature configs (flags, A/B variants, content) for each user
+3. **Track events** — send analytics events back to Nova (batched automatically)
 
-### Prerequisites
+### Install
 
-- You have a Nova organisation and app IDs
-- Nova Manager API is reachable (apiEndpoint)
-- Basic React/TypeScript familiarity
+```bash
+npm install nova-react-sdk
+# or
+yarn add nova-react-sdk
+```
 
-### Syllabus
+Peer dependencies: `react >= 16.8`
 
-1. Installation: [installation.md](./installation.md)
-2. Core concepts: [core-concepts.md](./core-concepts.md)
-3. Provider setup: [provider.md](./provider.md)
-4. User lifecycle (setUser, profiles): [user.md](./user.md)
-5. Experiences (load/read/hooks): [experiences.md](./experiences.md)
-6. Events tracking: [events.md](./events.md)
-7. Registry design (objects/experiences): [registry.md](./registry.md)
-8. Advanced patterns (prefetch, RN specifics): [advanced.md](./advanced.md)
-9. Testing/mocking the SDK: [testing.md](./testing.md)
-10. API reference (exports, types): [api.md](./api.md)
-11. Troubleshooting/FAQ: [troubleshooting.md](./troubleshooting.md)
-
-### Quickstart (10 min)
-
-- Install: `npm i nova-react-sdk`
-- Create `nova-objects.json` with at least one experience and object
-- Wrap your app in `NovaProvider` with `organisationId`, `appId`, `apiEndpoint`
-- Call `setUser({ userId, userProfile })` at startup
-- Call `loadAllExperiences()` and render with `useNovaExperience("<experience>")`
-
-Example
+### Quickstart
 
 ```tsx
-import { NovaProvider } from "nova-react-sdk";
-import NovaRegistry from "./nova-objects.json";
+import { NovaProvider, useNova, useNovaExperience } from "nova-react-sdk";
+import registry from "./nova-objects.json";
 
-<NovaProvider
-	config={{
-		organisationId: process.env.NOVA_ORG_ID!,
-		appId: process.env.NOVA_APP_ID!,
-		apiEndpoint: process.env.NOVA_API_ENDPOINT!,
-		registry: NovaRegistry,
-	}}
->
-	<App />
-</NovaProvider>;
+function App() {
+  return (
+    <NovaProvider
+      config={{
+        apiKey: "nova_sk_...",
+        apiEndpoint: "https://your-api.example.com",
+        registry,
+      }}
+    >
+      <Main />
+    </NovaProvider>
+  );
+}
+
+function Main() {
+  const { setUser } = useNova();
+
+  useEffect(() => {
+    setUser({ userId: "user-123", userProfile: { country: "KR" } });
+  }, []);
+
+  return <LandingScreen />;
+}
+
+function LandingScreen() {
+  const { objects, loaded, load } = useNovaExperience("landing");
+
+  useEffect(() => {
+    if (!loaded) load();
+  }, [loaded]);
+
+  return <Text>{objects?.hero_banner?.title ?? "Welcome"}</Text>;
+}
 ```
+
+### Docs
+
+1. [Core concepts and provider setup](./core-concepts.md)
+2. [User lifecycle](./user.md)
+3. [Experiences (loading and reading)](./experiences.md)
+4. [Event tracking](./events.md)
+5. [Registry design](./registry.md)
+6. [API reference](./api.md)
+7. [Testing](./testing.md)
+8. [Troubleshooting](./troubleshooting.md)
