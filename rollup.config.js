@@ -6,7 +6,7 @@ import terser from "@rollup/plugin-terser";
 
 export default {
   input: "src/index.ts",
-  external: ["react", "react-dom"],
+  external: ["react"],
   output: [
     {
       file: "dist/index.js",

@@ -12,7 +12,7 @@ const CONFIG = {
 
   // File paths to scan for registerNovaObject calls
   SOURCE_DIRS: ["src"],
-  REGISTRY_FILE: "nova-registry.json",
+  REGISTRY_FILE: process.env.NOVA_REGISTRY_PATH || "nova-registry.json",
 };
 
 class NovaRegistrySync {

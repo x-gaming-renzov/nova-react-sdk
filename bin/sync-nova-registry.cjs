@@ -9,7 +9,8 @@ try {
 
 const fs = require("fs");
 const path = require("path");
-const fetch = require("node-fetch");
+// Use built-in fetch (Node 18+), fall back to node-fetch for older versions
+const fetch = globalThis.fetch || require("node-fetch");
 
 class NovaSync {
   constructor() {
@@ -97,13 +98,29 @@ class NovaSync {
   loadObjectsFromJson() {
     console.log("📄 Loading objects from nova-objects.json...");
 
-    const jsonPath = path.join(process.cwd(), "src", "nova-objects.json");
+    // Configurable path: env var > .novarc > package.json nova.registryPath > fallbacks
+    const customPath =
+      process.env.NOVA_REGISTRY_PATH ||
+      this.config.registryPath ||
+      null;
 
-    if (!fs.existsSync(jsonPath)) {
+    const searchPaths = customPath
+      ? [path.resolve(process.cwd(), customPath)]
+      : [
+          path.join(process.cwd(), "config", "nova-objects.json"),
+          path.join(process.cwd(), "src", "nova-objects.json"),
+          path.join(process.cwd(), "nova-objects.json"),
+        ];
+
+    const jsonPath = searchPaths.find((p) => fs.existsSync(p));
+
+    if (!jsonPath) {
       throw new Error(
-        "nova-objects.json not found. Create this file with your object definitions."
+        `nova-objects.json not found. Searched:\n${searchPaths.map((p) => "  " + p).join("\n")}\nCreate this file or set NOVA_REGISTRY_PATH.`
       );
     }
+
+    console.log(`📂 Found: ${jsonPath}`);
 
     try {
       const jsonContent = fs.readFileSync(jsonPath, "utf8");

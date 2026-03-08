@@ -272,6 +272,8 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       evaluationReason: null,
       isLoaded: false,
     };
+
+    console.log(`[Nova SDK] Registry defaults for "${experienceName}":`, JSON.stringify(defaultExperienceObjects, null, 2));
   }
 
   const initialState: NovaState = {
@@ -354,6 +356,8 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
+        console.log(`[Nova SDK] loadExperience("${experienceName}") — requesting for user:`, state.user.userId);
+
         const data = await callApi<NovaExperienceResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experience/`,
           {
@@ -367,6 +371,8 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
             }),
           }
         );
+
+        console.log(`[Nova SDK] loadExperience("${experienceName}") — raw API response:`, JSON.stringify(data, null, 2));
 
         const experienceObjects: { [objectName: string]: NovaObject } = {};
 
@@ -386,6 +392,17 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           lastFetched: new Date(),
           objects: experienceObjects,
         };
+
+        console.log(`[Nova SDK] loadExperience("${experienceName}") — evaluated result:`, {
+          personalisation: data?.personalisation_name ?? "none (defaults)",
+          reason: data?.evaluation_reason,
+          objects: Object.fromEntries(
+            Object.entries(experienceObjects).map(([name, obj]) => [
+              name,
+              { variant: obj.variantName ?? "default", config: obj.config },
+            ])
+          ),
+        });
 
         dispatch({
           type: "SET_EXPERIENCE",
@@ -419,6 +436,8 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
+        console.log(`[Nova SDK] loadExperiences(${experienceNames ? JSON.stringify(experienceNames) : "all"}) — requesting for user:`, state.user.userId);
+
         const data = await callApi<GetExperiencesResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experiences/`,
           {
@@ -432,6 +451,8 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
             }),
           }
         );
+
+        console.log(`[Nova SDK] loadExperiences — raw API response:`, JSON.stringify(data, null, 2));
 
         // Map GetExperiencesResponse to NovaExperiences
         const novaExperiences: NovaExperiences = {};
@@ -457,6 +478,17 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           };
 
           novaExperiences[experienceName] = novaExperience;
+
+          console.log(`[Nova SDK] loadExperiences — "${experienceName}" evaluated:`, {
+            personalisation: experienceData.personalisation_name ?? "none (defaults)",
+            reason: experienceData.evaluation_reason,
+            objects: Object.fromEntries(
+              Object.entries(experienceObjects).map(([name, obj]) => [
+                name,
+                { variant: obj.variantName ?? "default", config: obj.config },
+              ])
+            ),
+          });
         }
 
         dispatch({
@@ -481,7 +513,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   );
 
   const loadAllExperiences = useCallback(async () => {
-    loadExperiences(null);
+    await loadExperiences(null);
   }, [loadExperiences]);
 
   // Experience get methods
