@@ -418,14 +418,18 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
             }
           );
 
-          dispatch({
-            type: "SET_USER",
-            payload: {
-              userId: anonId,
-              userProfile: {},
-              novaUserId: userResponse.nova_user_id,
-            },
-          });
+          // If identify was called while /create-user was in-flight,
+          // don't overwrite the identified user with the anon user
+          if (!identifyCalledRef.current) {
+            dispatch({
+              type: "SET_USER",
+              payload: {
+                userId: anonId,
+                userProfile: {},
+                novaUserId: userResponse.nova_user_id,
+              },
+            });
+          }
         } catch {
           // Network failure — anonymous events still work via anonymousId,
           // profile updates won't work until network recovers
@@ -456,6 +460,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
 
   const eventQueueRef = useRef<QueuedEvent[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const identifyCalledRef = useRef(false);
 
   const flushEvents = useCallback(async () => {
     const queue = eventQueueRef.current;
@@ -536,6 +541,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   // Identify: merge anonymous session → authenticated user
   const identify = useCallback(
     async (userId: string, userProfile?: UserProfile) => {
+      identifyCalledRef.current = true;
       const anonymousId = state.anonymousId;
 
       if (!anonymousId) {
