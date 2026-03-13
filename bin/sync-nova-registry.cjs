@@ -70,16 +70,16 @@ class NovaSync {
     try {
       const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
       const hasNova =
-        packageJson.dependencies?.["nova-react-sdk"] ||
-        packageJson.devDependencies?.["nova-react-sdk"];
+        packageJson.dependencies?.["xgaming-nova-react-sdk"] ||
+        packageJson.devDependencies?.["xgaming-nova-react-sdk"];
 
       if (!hasNova) {
         throw new Error(
-          "nova-react-sdk not found in dependencies. Install it first:\n  npm install nova-react-sdk"
+          "xgaming-nova-react-sdk not found in dependencies. Install it first:\n  npm install xgaming-nova-react-sdk"
         );
       }
     } catch (error) {
-      if (error.message.includes("nova-react-sdk")) throw error;
+      if (error.message.includes("xgaming-nova-react-sdk")) throw error;
       throw new Error("Invalid package.json file");
     }
 
