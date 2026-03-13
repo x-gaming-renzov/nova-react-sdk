@@ -653,13 +653,16 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         console.log(`[Nova SDK] loadExperience("${experienceName}") — raw API response:`, JSON.stringify(data, null, 2));
 
         const experienceObjects: { [objectName: string]: NovaObject } = {};
+        const registryDefaults = defaultExperiences[experienceName]?.objects ?? {};
 
         for (const [featureName, featureData] of Object.entries(
           data.features
         )) {
+          // Merge: registry defaults ← API response (variant overrides win)
+          const defaultConfig = registryDefaults[featureName]?.config ?? {};
           experienceObjects[featureName] = {
             variantName: featureData.variant_name,
-            config: featureData.config,
+            config: { ...defaultConfig, ...featureData.config },
           };
         }
 
@@ -738,13 +741,16 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
 
         for (const [experienceName, experienceData] of Object.entries(data)) {
           const experienceObjects: { [objectName: string]: NovaObject } = {};
+          const registryDefaults = defaultExperiences[experienceName]?.objects ?? {};
 
           for (const [featureName, featureData] of Object.entries(
             experienceData.features
           )) {
+            // Merge: registry defaults ← API response (variant overrides win)
+            const defaultConfig = registryDefaults[featureName]?.config ?? {};
             experienceObjects[featureName] = {
               variantName: featureData.variant_name,
-              config: featureData.config,
+              config: { ...defaultConfig, ...featureData.config },
             };
           }
 
