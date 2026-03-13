@@ -5,7 +5,7 @@ const fetch = require("node-fetch");
 // Configuration
 const CONFIG = {
   // These should come from environment variables
-  NOVA_API_ENDPOINT: process.env.NOVA_API_ENDPOINT || "https://api.nova.com",
+  NOVA_API_ENDPOINT: process.env.NOVA_API_ENDPOINT || "https://api.xgaming.club",
   NOVA_ORG_ID: process.env.NOVA_ORG_ID,
   NOVA_APP_ID: process.env.NOVA_APP_ID,
   NOVA_API_KEY: process.env.NOVA_API_KEY,

@@ -8,6 +8,7 @@ export { useNova, useNovaExperience, useNovaInit } from "./hooks/useNova";
 export type {
   NovaConfig,
   NovaEventBatchConfig,
+  NovaStorageAdapter,
   NovaUser,
   SetNovaUser,
   UserProfile,

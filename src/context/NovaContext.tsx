@@ -8,6 +8,97 @@ import React, {
 } from "react";
 import { callApi } from "../service/api";
 
+// --- Storage adapter ---
+
+export interface NovaStorageAdapter {
+  getItem(key: string): Promise<string | null> | string | null;
+  setItem(key: string, value: string): Promise<void> | void;
+  removeItem(key: string): Promise<void> | void;
+}
+
+const localStorageAdapter: NovaStorageAdapter = {
+  getItem(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Silently fail (SSR, privacy mode)
+    }
+  },
+  removeItem(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore
+    }
+  },
+};
+
+// --- Anonymous ID helpers ---
+
+const ANON_STORAGE_PREFIX = "nova_anonymous_id";
+
+function getStorageKey(apiKey: string): string {
+  const suffix = apiKey.slice(-8);
+  return `${ANON_STORAGE_PREFIX}_${suffix}`;
+}
+
+function generateAnonymousId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+async function getOrCreateAnonymousId(
+  apiKey: string,
+  storage: NovaStorageAdapter
+): Promise<string> {
+  const key = getStorageKey(apiKey);
+  try {
+    const stored = await storage.getItem(key);
+    if (stored) return stored;
+  } catch {
+    // Storage read failed
+  }
+  const id = generateAnonymousId();
+  try {
+    await storage.setItem(key, id);
+  } catch {
+    // Silently fail — works for current session, won't persist
+  }
+  return id;
+}
+
+async function clearAnonymousIdFromStorage(
+  apiKey: string,
+  storage: NovaStorageAdapter
+): Promise<void> {
+  try {
+    await storage.removeItem(getStorageKey(apiKey));
+  } catch {
+    // Ignore
+  }
+}
+
+interface IdentifyResponse {
+  nova_user_id: string;
+  merged: boolean;
+}
+
 export interface NovaEventBatchConfig {
   maxSize?: number;       // flush when queue reaches this size (default: 10)
   flushInterval?: number; // flush every N milliseconds (default: 5000)
@@ -16,6 +107,7 @@ export interface NovaEventBatchConfig {
 export interface NovaConfig {
   apiKey: string;
   apiEndpoint: string;
+  storage?: NovaStorageAdapter;
   eventBatch?: NovaEventBatchConfig;
   registry: {
     objects: {
@@ -79,6 +171,7 @@ export interface NovaExperiences {
 export interface NovaState {
   config: NovaConfig;
   user: NovaUser | null;
+  anonymousId: string | null;
 
   isLoading: boolean;
   error: string | null;
@@ -113,6 +206,8 @@ type NovaAction =
   | { type: "SET_CONFIG"; payload: Partial<NovaConfig> }
   | { type: "SET_USER"; payload: NovaUser }
   | { type: "UPDATE_USER_PROFILE"; payload: UserProfile }
+  | { type: "SET_ANONYMOUS_ID"; payload: string }
+  | { type: "CLEAR_ANONYMOUS_ID" }
   | {
       type: "SET_EXPERIENCE";
       payload: { experienceName: string; experience: NovaExperience };
@@ -133,6 +228,7 @@ export interface NovaContextValue {
 
   // User methods
   setUser: (user: SetNovaUser) => Promise<void>;
+  identify: (userId: string, userProfile?: UserProfile) => Promise<void>;
   updateUserProfile: (userProfile: UserProfile) => Promise<void>;
 
   // Experience Load methods
@@ -187,6 +283,18 @@ const novaReducer = (state: NovaState, action: NovaAction): NovaState => {
         user: action.payload,
       };
 
+    case "SET_ANONYMOUS_ID":
+      return {
+        ...state,
+        anonymousId: action.payload,
+      };
+
+    case "CLEAR_ANONYMOUS_ID":
+      return {
+        ...state,
+        anonymousId: null,
+      };
+
     case "UPDATE_USER_PROFILE":
       if (!state.user) {
         return state;
@@ -229,6 +337,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   children,
   config,
 }) => {
+  const storage = config.storage ?? localStorageAdapter;
   const registry = config.registry;
   const defaultExperiences: NovaExperiences = {};
 
@@ -279,12 +388,52 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   const initialState: NovaState = {
     config,
     user: null,
+    anonymousId: null,
     isLoading: false,
     error: null,
     experiences: defaultExperiences,
   };
 
   const [state, dispatch] = useReducer(novaReducer, initialState);
+
+  // Initialize anonymous ID on mount and register anonymous user on backend
+  useEffect(() => {
+    if (!state.user) {
+      (async () => {
+        const anonId = await getOrCreateAnonymousId(config.apiKey, storage);
+        dispatch({ type: "SET_ANONYMOUS_ID", payload: anonId });
+
+        try {
+          const userResponse = await callApi<{ nova_user_id: string }>(
+            `${config.apiEndpoint}/api/v1/users/create-user/`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${config.apiKey}`,
+              },
+              body: JSON.stringify({
+                user_id: anonId,
+                user_profile: {},
+              }),
+            }
+          );
+
+          dispatch({
+            type: "SET_USER",
+            payload: {
+              userId: anonId,
+              userProfile: {},
+              novaUserId: userResponse.nova_user_id,
+            },
+          });
+        } catch {
+          // Network failure — anonymous events still work via anonymousId,
+          // profile updates won't work until network recovers
+        }
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Utility methods
   const setLoading = useCallback((loading: boolean) => {
@@ -295,8 +444,72 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     dispatch({ type: "SET_ERROR", payload: error });
   }, []);
 
-  const setUser = useCallback(
-    async (user: SetNovaUser) => {
+  // Analytics methods — batched event tracking
+  const batchMaxSize = config.eventBatch?.maxSize ?? 10;
+  const batchFlushInterval = config.eventBatch?.flushInterval ?? 5000;
+
+  interface QueuedEvent {
+    event_name: string;
+    event_data: Record<string, any>;
+    timestamp: string;
+  }
+
+  const eventQueueRef = useRef<QueuedEvent[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushEvents = useCallback(async () => {
+    const queue = eventQueueRef.current;
+    if (queue.length === 0) return;
+
+    const effectiveUserId = state.user?.userId ?? state.anonymousId;
+    if (!state.config.apiKey || !effectiveUserId) return;
+
+    // Drain the queue
+    const events = queue.splice(0, queue.length);
+
+    try {
+      await callApi<{ success: boolean; count: number }>(
+        `${state.config.apiEndpoint}/api/v1/metrics/track-events/`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${state.config.apiKey}`,
+          },
+          body: JSON.stringify({
+            user_id: effectiveUserId,
+            events,
+          }),
+        }
+      );
+    } catch {
+      // Put events back at the front of the queue for retry on next flush
+      eventQueueRef.current.unshift(...events);
+    }
+  }, [state.config, state.user?.userId, state.anonymousId]);
+
+  const trackEvent = useCallback(
+    (eventName: string, eventData?: Record<string, any>) => {
+      if (!state.config.apiKey) return;
+      const effectiveUserId = state.user?.userId ?? state.anonymousId;
+      if (!effectiveUserId) return;
+
+      eventQueueRef.current.push({
+        event_name: eventName,
+        event_data: eventData || {},
+        timestamp: new Date().toISOString(),
+      });
+
+      // Flush immediately if queue reached max size
+      if (eventQueueRef.current.length >= batchMaxSize) {
+        flushEvents();
+      }
+    },
+    [state.config, state.user?.userId, state.anonymousId, batchMaxSize, flushEvents]
+  );
+
+  // Internal: raw user creation (no identify logic)
+  const createUser = useCallback(
+    async (user: SetNovaUser): Promise<NovaUser> => {
       const userResponse = await callApi<{ nova_user_id: string }>(
         `${state.config.apiEndpoint}/api/v1/users/create-user/`,
         {
@@ -311,15 +524,73 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         }
       );
 
-      const payload: NovaUser = {
+      return {
         userId: user.userId,
         userProfile: user.userProfile,
         novaUserId: userResponse.nova_user_id,
       };
-
-      dispatch({ type: "SET_USER", payload: payload });
     },
     [state.config]
+  );
+
+  // Identify: merge anonymous session → authenticated user
+  const identify = useCallback(
+    async (userId: string, userProfile?: UserProfile) => {
+      const anonymousId = state.anonymousId;
+
+      if (!anonymousId) {
+        // No anonymous session — fall back to plain create
+        const novaUser = await createUser({
+          userId,
+          userProfile: userProfile ?? {},
+        });
+        dispatch({ type: "SET_USER", payload: novaUser });
+        return;
+      }
+
+      // Flush pending events so they are sent with the anonymous ID
+      await flushEvents();
+
+      const identifyResponse = await callApi<IdentifyResponse>(
+        `${state.config.apiEndpoint}/api/v1/users/identify/`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${state.config.apiKey}`,
+          },
+          body: JSON.stringify({
+            anonymous_id: anonymousId,
+            identified_id: userId,
+            user_profile: userProfile ?? {},
+          }),
+        }
+      );
+
+      dispatch({
+        type: "SET_USER",
+        payload: {
+          userId,
+          userProfile: userProfile ?? {},
+          novaUserId: identifyResponse.nova_user_id,
+        },
+      });
+      dispatch({ type: "CLEAR_ANONYMOUS_ID" });
+      await clearAnonymousIdFromStorage(state.config.apiKey, storage);
+    },
+    [state.config, state.anonymousId, storage, createUser, flushEvents]
+  );
+
+  const setUser = useCallback(
+    async (user: SetNovaUser) => {
+      if (state.anonymousId) {
+        await identify(user.userId, user.userProfile);
+        return;
+      }
+
+      const novaUser = await createUser(user);
+      dispatch({ type: "SET_USER", payload: novaUser });
+    },
+    [state.anonymousId, identify, createUser]
   );
 
   const updateUserProfile = useCallback(
@@ -348,7 +619,8 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   // Experiences Load Methods
   const loadExperience = useCallback(
     async (experienceName: string) => {
-      if (!state.user) {
+      const effectiveUserId = state.user?.userId ?? state.anonymousId;
+      if (!effectiveUserId) {
         throw new Error("User must be set before loading experiences");
       }
 
@@ -356,7 +628,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
-        console.log(`[Nova SDK] loadExperience("${experienceName}") — requesting for user:`, state.user.userId);
+        console.log(`[Nova SDK] loadExperience("${experienceName}") — requesting for user:`, effectiveUserId);
 
         const data = await callApi<NovaExperienceResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experience/`,
@@ -366,7 +638,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
               Authorization: `Bearer ${state.config.apiKey}`,
             },
             body: JSON.stringify({
-              user_id: state.user.userId,
+              user_id: effectiveUserId,
               experience_name: experienceName,
             }),
           }
@@ -423,12 +695,13 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         setLoading(false);
       }
     },
-    [state.config, state.user, setLoading, setError]
+    [state.config, state.user, state.anonymousId, setLoading, setError]
   );
 
   const loadExperiences = useCallback(
     async (experienceNames: string[] | null = null) => {
-      if (!state.user) {
+      const effectiveUserId = state.user?.userId ?? state.anonymousId;
+      if (!effectiveUserId) {
         throw new Error("User must be set before loading experiences");
       }
 
@@ -436,7 +709,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
-        console.log(`[Nova SDK] loadExperiences(${experienceNames ? JSON.stringify(experienceNames) : "all"}) — requesting for user:`, state.user.userId);
+        console.log(`[Nova SDK] loadExperiences(${experienceNames ? JSON.stringify(experienceNames) : "all"}) — requesting for user:`, effectiveUserId);
 
         const data = await callApi<GetExperiencesResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experiences/`,
@@ -446,7 +719,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
               Authorization: `Bearer ${state.config.apiKey}`,
             },
             body: JSON.stringify({
-              user_id: state.user.userId,
+              user_id: effectiveUserId,
               experience_names: experienceNames,
             }),
           }
@@ -509,7 +782,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         setLoading(false);
       }
     },
-    [state.config, state.user, setLoading, setError]
+    [state.config, state.user, state.anonymousId, setLoading, setError]
   );
 
   const loadAllExperiences = useCallback(async () => {
@@ -554,65 +827,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     [state.experiences]
   );
 
-  // Analytics methods — batched event tracking
-  const batchMaxSize = config.eventBatch?.maxSize ?? 10;
-  const batchFlushInterval = config.eventBatch?.flushInterval ?? 5000;
-
-  interface QueuedEvent {
-    event_name: string;
-    event_data: Record<string, any>;
-    timestamp: string;
-  }
-
-  const eventQueueRef = useRef<QueuedEvent[]>([]);
-  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const flushEvents = useCallback(async () => {
-    const queue = eventQueueRef.current;
-    if (queue.length === 0) return;
-    if (!state.config.apiKey || !state.user?.userId) return;
-
-    // Drain the queue
-    const events = queue.splice(0, queue.length);
-
-    try {
-      await callApi<{ success: boolean; count: number }>(
-        `${state.config.apiEndpoint}/api/v1/metrics/track-events/`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${state.config.apiKey}`,
-          },
-          body: JSON.stringify({
-            user_id: state.user.userId,
-            events,
-          }),
-        }
-      );
-    } catch {
-      // Put events back at the front of the queue for retry on next flush
-      eventQueueRef.current.unshift(...events);
-    }
-  }, [state.config, state.user?.userId]);
-
-  const trackEvent = useCallback(
-    (eventName: string, eventData?: Record<string, any>) => {
-      if (!state.config.apiKey || !state.user?.userId) return;
-
-      eventQueueRef.current.push({
-        event_name: eventName,
-        event_data: eventData || {},
-        timestamp: new Date().toISOString(),
-      });
-
-      // Flush immediately if queue reached max size
-      if (eventQueueRef.current.length >= batchMaxSize) {
-        flushEvents();
-      }
-    },
-    [state.config, state.user?.userId, batchMaxSize, flushEvents]
-  );
-
   // Flush on interval
   useEffect(() => {
     flushTimerRef.current = setInterval(() => {
@@ -636,6 +850,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     setError,
 
     setUser,
+    identify,
     updateUserProfile,
 
     loadExperience,
