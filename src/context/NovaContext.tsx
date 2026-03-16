@@ -759,8 +759,23 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           user_id: effectiveUserId,
           experience_names: experienceNames,
         };
+        // Use explicit payload if provided, otherwise merge cached payloads
         if (options?.payload) {
           requestBody.payload = options.payload;
+        } else if (experienceNames) {
+          // Build merged payload from cache for SSE-triggered reloads
+          const merged: Record<string, any> = {};
+          let hasPayload = false;
+          for (const name of experienceNames) {
+            const cached = payloadCacheRef.current.get(name);
+            if (cached) {
+              Object.assign(merged, cached);
+              hasPayload = true;
+            }
+          }
+          if (hasPayload) {
+            requestBody.payload = merged;
+          }
         }
 
         const data = await callApi<GetExperiencesResponse>(
