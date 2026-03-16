@@ -903,78 +903,86 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
 
     console.log(`[Nova SDK] SSE connecting to notice service, watching ${names.size} experience(s)`);
 
-    (async () => {
-      try {
-        const response = await fetch(url, {
-          signal: abort.signal,
-          headers: { Accept: "text/event-stream" },
-        });
+    // Use XMLHttpRequest instead of fetch — React Native's fetch does NOT
+    // support streaming ReadableStream, but XHR's onprogress fires incrementally.
+    const xhr = new XMLHttpRequest();
+    let seenBytes = 0;
+    let buffer = "";
 
-        if (!response.ok || !response.body) {
-          throw new Error(`SSE connect failed: ${response.status}`);
+    const handleFrames = (raw: string) => {
+      buffer += raw;
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+
+      for (const frame of frames) {
+        let eventType = "";
+        let eventData = "";
+
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event: ")) eventType = line.slice(7);
+          else if (line.startsWith("data: ")) eventData = line.slice(6);
         }
 
-        reconnectAttemptRef.current = 0;
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const frames = buffer.split("\n\n");
-          buffer = frames.pop() ?? "";
-
-          for (const frame of frames) {
-            let eventType = "";
-            let eventData = "";
-
-            for (const line of frame.split("\n")) {
-              if (line.startsWith("event: ")) eventType = line.slice(7);
-              else if (line.startsWith("data: ")) eventData = line.slice(6);
+        if (eventType === "connected") {
+          console.log("[Nova SDK] SSE connected");
+          reconnectAttemptRef.current = 0;
+          const subNames = Array.from(subscribedNamesRef.current);
+          if (subNames.length > 0) {
+            loadExperiences(subNames).catch(() => {});
+          }
+        } else if (eventType === "pull_update") {
+          try {
+            const payload = JSON.parse(eventData);
+            const affectedIds: string[] = payload.experience_ids ?? [];
+            const toReload = affectedIds.filter((id) =>
+              subscribedNamesRef.current.has(id)
+            );
+            if (toReload.length > 0) {
+              console.log(`[Nova SDK] SSE push — reloading ${toReload.length} experience(s)`);
+              loadExperiences(toReload).catch(() => {});
             }
-
-            if (eventType === "connected") {
-              console.log("[Nova SDK] SSE connected");
-              // Initial pull — reload all subscribed experiences with cached payloads
-              const subNames = Array.from(subscribedNamesRef.current);
-              if (subNames.length > 0) {
-                loadExperiences(subNames).catch(() => {});
-              }
-            } else if (eventType === "pull_update") {
-              try {
-                const payload = JSON.parse(eventData);
-                const affectedIds: string[] = payload.experience_ids ?? [];
-                // Only reload experiences we're subscribed to
-                const toReload = affectedIds.filter((id) =>
-                  subscribedNamesRef.current.has(id)
-                );
-                if (toReload.length > 0) {
-                  console.log(`[Nova SDK] SSE push — reloading ${toReload.length} experience(s)`);
-                  loadExperiences(toReload).catch(() => {});
-                }
-              } catch {
-                // Malformed data, ignore
-              }
-            }
-            // heartbeat — ignore
+          } catch {
+            // Malformed data, ignore
           }
         }
-      } catch (err: any) {
-        if (err?.name === "AbortError") return; // Intentional disconnect
-        console.warn("[Nova SDK] SSE error:", err?.message ?? err);
+        // heartbeat — ignore
       }
+    };
 
-      // Reconnect with exponential backoff (if not intentionally aborted)
-      if (!abort.signal.aborted && subscribedNamesRef.current.size > 0) {
-        const attempt = reconnectAttemptRef.current++;
-        const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
-        console.log(`[Nova SDK] SSE reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-        reconnectTimerRef.current = setTimeout(connectSSE, delay);
-      }
-    })();
+    xhr.open("GET", url, true);
+    xhr.setRequestHeader("Accept", "text/event-stream");
+
+    xhr.onprogress = () => {
+      if (abort.signal.aborted) return;
+      const newData = xhr.responseText.slice(seenBytes);
+      seenBytes = xhr.responseText.length;
+      if (newData) handleFrames(newData);
+    };
+
+    const scheduleReconnect = () => {
+      if (abort.signal.aborted || subscribedNamesRef.current.size === 0) return;
+      const attempt = reconnectAttemptRef.current++;
+      const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+      console.log(`[Nova SDK] SSE reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+      reconnectTimerRef.current = setTimeout(connectSSE, delay);
+    };
+
+    xhr.onerror = () => {
+      if (abort.signal.aborted) return;
+      console.warn("[Nova SDK] SSE connection error");
+      scheduleReconnect();
+    };
+
+    xhr.onloadend = () => {
+      if (abort.signal.aborted) return;
+      // Connection closed by server — reconnect
+      scheduleReconnect();
+    };
+
+    // Wire up abort to cancel XHR
+    abort.signal.addEventListener("abort", () => xhr.abort());
+
+    xhr.send();
   }, [state.config.noticeServiceUrl, state.config.apiKey, loadExperiences]);
 
   const subscribe = useCallback(

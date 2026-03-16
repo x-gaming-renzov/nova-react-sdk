@@ -1,6 +1,6 @@
 {
   "name": "xgaming-nova-react-sdk",
-  "version": "1.0.7",
+  "version": "1.0.9",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.esm.js",
@@ -36,5 +36,8 @@
     "rollup-plugin-peer-deps-external": "^2.2.4",
     "tslib": "^2.8.1",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "xgaming-nova-react-sdk": "^1.0.7"
   }
 }
