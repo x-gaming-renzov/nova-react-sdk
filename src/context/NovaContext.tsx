@@ -104,9 +104,14 @@ export interface NovaEventBatchConfig {
   flushInterval?: number; // flush every N milliseconds (default: 5000)
 }
 
+export interface LoadExperienceOptions {
+  payload?: Record<string, any>;
+}
+
 export interface NovaConfig {
   apiKey: string;
   apiEndpoint: string;
+  noticeServiceUrl?: string;
   storage?: NovaStorageAdapter;
   eventBatch?: NovaEventBatchConfig;
   registry: {
@@ -232,8 +237,8 @@ export interface NovaContextValue {
   updateUserProfile: (userProfile: UserProfile) => Promise<void>;
 
   // Experience Load methods
-  loadExperience: (experienceName: string) => Promise<void>;
-  loadExperiences: (experienceNames: string[] | null) => Promise<void>;
+  loadExperience: (experienceName: string, options?: LoadExperienceOptions) => Promise<void>;
+  loadExperiences: (experienceNames: string[] | null, options?: LoadExperienceOptions) => Promise<void>;
   loadAllExperiences: () => Promise<void>;
 
   // Experience get methods
@@ -242,8 +247,13 @@ export interface NovaContextValue {
     experienceName: string
   ) => T | null;
   getExperience: <T extends Record<string, any>>(
-    experienceName: string
+    experienceName: string,
+    options?: LoadExperienceOptions
   ) => Promise<T | null>;
+
+  // Subscription methods (SSE real-time updates)
+  subscribe: (experienceNames: string[]) => void;
+  unsubscribe: (experienceNames: string[]) => void;
 
   // Analytics methods
   trackEvent: (
@@ -461,6 +471,13 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   const eventQueueRef = useRef<QueuedEvent[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const identifyCalledRef = useRef(false);
+  const payloadCacheRef = useRef<Map<string, Record<string, any>>>(new Map());
+
+  // SSE subscription refs
+  const sseAbortRef = useRef<AbortController | null>(null);
+  const subscribedNamesRef = useRef<Set<string>>(new Set());
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
 
   const flushEvents = useCallback(async () => {
     const queue = eventQueueRef.current;
@@ -624,10 +641,15 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
 
   // Experiences Load Methods
   const loadExperience = useCallback(
-    async (experienceName: string) => {
+    async (experienceName: string, options?: LoadExperienceOptions) => {
       const effectiveUserId = state.user?.userId ?? state.anonymousId;
       if (!effectiveUserId) {
         throw new Error("User must be set before loading experiences");
+      }
+
+      // Cache payload for SSE-triggered reloads
+      if (options?.payload) {
+        payloadCacheRef.current.set(experienceName, options.payload);
       }
 
       setLoading(true);
@@ -636,6 +658,15 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       try {
         console.log(`[Nova SDK] loadExperience("${experienceName}") — requesting for user:`, effectiveUserId);
 
+        const requestBody: Record<string, any> = {
+          user_id: effectiveUserId,
+          experience_name: experienceName,
+        };
+        const cachedPayload = payloadCacheRef.current.get(experienceName);
+        if (cachedPayload) {
+          requestBody.payload = cachedPayload;
+        }
+
         const data = await callApi<NovaExperienceResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experience/`,
           {
@@ -643,10 +674,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
             headers: {
               Authorization: `Bearer ${state.config.apiKey}`,
             },
-            body: JSON.stringify({
-              user_id: effectiveUserId,
-              experience_name: experienceName,
-            }),
+            body: JSON.stringify(requestBody),
           }
         );
 
@@ -708,10 +736,17 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   );
 
   const loadExperiences = useCallback(
-    async (experienceNames: string[] | null = null) => {
+    async (experienceNames: string[] | null = null, options?: LoadExperienceOptions) => {
       const effectiveUserId = state.user?.userId ?? state.anonymousId;
       if (!effectiveUserId) {
         throw new Error("User must be set before loading experiences");
+      }
+
+      // Cache payload for all requested experiences (used by SSE-triggered reloads)
+      if (options?.payload && experienceNames) {
+        for (const name of experienceNames) {
+          payloadCacheRef.current.set(name, options.payload);
+        }
       }
 
       setLoading(true);
@@ -720,6 +755,14 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       try {
         console.log(`[Nova SDK] loadExperiences(${experienceNames ? JSON.stringify(experienceNames) : "all"}) — requesting for user:`, effectiveUserId);
 
+        const requestBody: Record<string, any> = {
+          user_id: effectiveUserId,
+          experience_names: experienceNames,
+        };
+        if (options?.payload) {
+          requestBody.payload = options.payload;
+        }
+
         const data = await callApi<GetExperiencesResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experiences/`,
           {
@@ -727,10 +770,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
             headers: {
               Authorization: `Bearer ${state.config.apiKey}`,
             },
-            body: JSON.stringify({
-              user_id: effectiveUserId,
-              experience_names: experienceNames,
-            }),
+            body: JSON.stringify(requestBody),
           }
         );
 
@@ -829,15 +869,163 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   );
 
   const getExperience = useCallback(
-    async <T extends Record<string, any>>(experienceName: string) => {
+    async <T extends Record<string, any>>(experienceName: string, options?: LoadExperienceOptions) => {
       if (!isExperienceLoaded(experienceName)) {
-        await loadExperience(experienceName);
+        await loadExperience(experienceName, options);
       }
 
       return readExperience<T>(experienceName);
     },
-    [state.experiences]
+    [state.experiences, isExperienceLoaded, loadExperience, readExperience]
   );
+
+  // ── SSE subscription ───────────────────────────────────────────────────────
+
+  const connectSSE = useCallback(() => {
+    const noticeUrl = state.config.noticeServiceUrl;
+    const names = subscribedNamesRef.current;
+    if (!noticeUrl || names.size === 0) return;
+
+    // Abort previous connection
+    sseAbortRef.current?.abort();
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    const abort = new AbortController();
+    sseAbortRef.current = abort;
+
+    const url =
+      `${noticeUrl}/subscribe` +
+      `?experience_names=${encodeURIComponent(Array.from(names).join(","))}` +
+      `&token=${encodeURIComponent(state.config.apiKey)}`;
+
+    console.log(`[Nova SDK] SSE connecting to notice service, watching ${names.size} experience(s)`);
+
+    (async () => {
+      try {
+        const response = await fetch(url, {
+          signal: abort.signal,
+          headers: { Accept: "text/event-stream" },
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`SSE connect failed: ${response.status}`);
+        }
+
+        reconnectAttemptRef.current = 0;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+
+          for (const frame of frames) {
+            let eventType = "";
+            let eventData = "";
+
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("event: ")) eventType = line.slice(7);
+              else if (line.startsWith("data: ")) eventData = line.slice(6);
+            }
+
+            if (eventType === "connected") {
+              console.log("[Nova SDK] SSE connected");
+              // Initial pull — reload all subscribed experiences with cached payloads
+              const subNames = Array.from(subscribedNamesRef.current);
+              if (subNames.length > 0) {
+                loadExperiences(subNames).catch(() => {});
+              }
+            } else if (eventType === "pull_update") {
+              try {
+                const payload = JSON.parse(eventData);
+                const affectedIds: string[] = payload.experience_ids ?? [];
+                // Only reload experiences we're subscribed to
+                const toReload = affectedIds.filter((id) =>
+                  subscribedNamesRef.current.has(id)
+                );
+                if (toReload.length > 0) {
+                  console.log(`[Nova SDK] SSE push — reloading ${toReload.length} experience(s)`);
+                  loadExperiences(toReload).catch(() => {});
+                }
+              } catch {
+                // Malformed data, ignore
+              }
+            }
+            // heartbeat — ignore
+          }
+        }
+      } catch (err: any) {
+        if (err?.name === "AbortError") return; // Intentional disconnect
+        console.warn("[Nova SDK] SSE error:", err?.message ?? err);
+      }
+
+      // Reconnect with exponential backoff (if not intentionally aborted)
+      if (!abort.signal.aborted && subscribedNamesRef.current.size > 0) {
+        const attempt = reconnectAttemptRef.current++;
+        const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+        console.log(`[Nova SDK] SSE reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+        reconnectTimerRef.current = setTimeout(connectSSE, delay);
+      }
+    })();
+  }, [state.config.noticeServiceUrl, state.config.apiKey, loadExperiences]);
+
+  const subscribe = useCallback(
+    (experienceNames: string[]) => {
+      const names = subscribedNamesRef.current;
+      const before = names.size;
+      for (const name of experienceNames) {
+        names.add(name);
+      }
+      if (names.size !== before) {
+        // Set changed — reconnect to update server-side filter
+        connectSSE();
+      }
+    },
+    [connectSSE]
+  );
+
+  const unsubscribe = useCallback(
+    (experienceNames: string[]) => {
+      const names = subscribedNamesRef.current;
+      const before = names.size;
+      for (const name of experienceNames) {
+        names.delete(name);
+      }
+      if (names.size !== before) {
+        if (names.size === 0) {
+          // No more subscriptions — disconnect
+          sseAbortRef.current?.abort();
+          sseAbortRef.current = null;
+          if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+          }
+        } else {
+          // Set changed — reconnect to update server-side filter
+          connectSSE();
+        }
+      }
+    },
+    [connectSSE]
+  );
+
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => {
+      sseAbortRef.current?.abort();
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+    };
+  }, []);
 
   // Flush on interval
   useEffect(() => {
@@ -872,6 +1060,9 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     isExperienceLoaded,
     readExperience,
     getExperience,
+
+    subscribe,
+    unsubscribe,
 
     trackEvent,
     flushEvents,

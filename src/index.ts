@@ -2,7 +2,7 @@
 export { NovaProvider, NovaContext } from "./context/NovaContext";
 
 // Hooks
-export { useNova, useNovaExperience, useNovaInit } from "./hooks/useNova";
+export { useNova, useNovaExperience, useNovaInit, useNovaSubscription } from "./hooks/useNova";
 
 // Type exports for consumers
 export type {
@@ -18,4 +18,5 @@ export type {
   NovaExperiences,
   NovaState,
   NovaContextValue,
+  LoadExperienceOptions,
 } from "./context/NovaContext";

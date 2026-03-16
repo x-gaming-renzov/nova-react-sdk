@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect } from "react";
+import { useCallback, useContext, useEffect, useRef } from "react";
 import { NovaContext } from "../context/NovaContext";
 
 export const useNova = () => {
@@ -43,6 +43,24 @@ export const useNovaExperience = <T extends Record<string, any>>(
     load,
     get,
   };
+};
+
+export const useNovaSubscription = (experienceNames: string[]) => {
+  const { subscribe, unsubscribe } = useNova();
+  const serialized = JSON.stringify(experienceNames);
+  const prevRef = useRef<string>(serialized);
+
+  useEffect(() => {
+    if (experienceNames.length === 0) return;
+
+    subscribe(experienceNames);
+    prevRef.current = serialized;
+
+    return () => {
+      unsubscribe(experienceNames);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized, subscribe, unsubscribe]);
 };
 
 export const useNovaInit = () => {
