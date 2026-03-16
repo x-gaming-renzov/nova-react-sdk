@@ -100,8 +100,8 @@ interface IdentifyResponse {
 }
 
 export interface NovaEventBatchConfig {
-  maxSize?: number;       // flush when queue reaches this size (default: 10)
-  flushInterval?: number; // flush every N milliseconds (default: 5000)
+  maxSize?: number;
+  flushInterval?: number;
 }
 
 export interface LoadExperienceOptions {
@@ -143,7 +143,6 @@ export type UserProfile = Record<string, any>;
 export interface NovaUser {
   userId: string;
   userProfile: UserProfile;
-
   novaUserId?: string;
 }
 
@@ -177,10 +176,8 @@ export interface NovaState {
   config: NovaConfig;
   user: NovaUser | null;
   anonymousId: string | null;
-
   isLoading: boolean;
   error: string | null;
-
   experiences: NovaExperiences;
 }
 
@@ -227,39 +224,25 @@ export interface NovaContextValue {
   state: NovaState;
   dispatch: React.Dispatch<NovaAction>;
 
-  // Utility methods
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
 
-  // User methods
   setUser: (user: SetNovaUser) => Promise<void>;
   identify: (userId: string, userProfile?: UserProfile) => Promise<void>;
   updateUserProfile: (userProfile: UserProfile) => Promise<void>;
 
-  // Experience Load methods
   loadExperience: (experienceName: string, options?: LoadExperienceOptions) => Promise<void>;
   loadExperiences: (experienceNames: string[] | null, options?: LoadExperienceOptions) => Promise<void>;
   loadAllExperiences: () => Promise<void>;
 
-  // Experience get methods
   isExperienceLoaded: (experienceName: string) => boolean;
-  readExperience: <T extends Record<string, any>>(
-    experienceName: string
-  ) => T | null;
-  getExperience: <T extends Record<string, any>>(
-    experienceName: string,
-    options?: LoadExperienceOptions
-  ) => Promise<T | null>;
+  readExperience: <T extends Record<string, any>>(experienceName: string) => T | null;
+  getExperience: <T extends Record<string, any>>(experienceName: string, options?: LoadExperienceOptions) => Promise<T | null>;
 
-  // Subscription methods (SSE real-time updates)
   subscribe: (experienceNames: string[]) => void;
   unsubscribe: (experienceNames: string[]) => void;
 
-  // Analytics methods
-  trackEvent: (
-    eventName: string,
-    eventData?: Record<string, any>
-  ) => void;
+  trackEvent: (eventName: string, eventData?: Record<string, any>) => void;
   flushEvents: () => Promise<void>;
 }
 
@@ -270,46 +253,19 @@ export const NovaContext = createContext<NovaContextValue | undefined>(
 const novaReducer = (state: NovaState, action: NovaAction): NovaState => {
   switch (action.type) {
     case "SET_LOADING":
-      return {
-        ...state,
-        isLoading: action.payload,
-      };
-
+      return { ...state, isLoading: action.payload };
     case "SET_ERROR":
-      return {
-        ...state,
-        error: action.payload,
-      };
-
+      return { ...state, error: action.payload };
     case "SET_CONFIG":
-      return {
-        ...state,
-        config: { ...state.config, ...action.payload },
-      };
-
+      return { ...state, config: { ...state.config, ...action.payload } };
     case "SET_USER":
-      return {
-        ...state,
-        user: action.payload,
-      };
-
+      return { ...state, user: action.payload };
     case "SET_ANONYMOUS_ID":
-      return {
-        ...state,
-        anonymousId: action.payload,
-      };
-
+      return { ...state, anonymousId: action.payload };
     case "CLEAR_ANONYMOUS_ID":
-      return {
-        ...state,
-        anonymousId: null,
-      };
-
+      return { ...state, anonymousId: null };
     case "UPDATE_USER_PROFILE":
-      if (!state.user) {
-        return state;
-      }
-
+      if (!state.user) return state;
       return {
         ...state,
         user: {
@@ -317,7 +273,6 @@ const novaReducer = (state: NovaState, action: NovaAction): NovaState => {
           userProfile: { ...state.user.userProfile, ...action.payload },
         },
       };
-
     case "SET_EXPERIENCE":
       return {
         ...state,
@@ -326,13 +281,11 @@ const novaReducer = (state: NovaState, action: NovaAction): NovaState => {
           [action.payload.experienceName]: action.payload.experience,
         },
       };
-
     case "SET_EXPERIENCES":
       return {
         ...state,
         experiences: { ...state.experiences, ...action.payload },
       };
-
     default:
       return state;
   }
@@ -343,6 +296,15 @@ interface NovaProviderProps {
   config: NovaConfig;
 }
 
+function log(msg: string, ...extras: any[]) {
+  // Unified log with concise Nova SDK prefix
+  if (extras.length === 0) {
+    console.log(`[Nova] ${msg}`);
+  } else {
+    console.log(`[Nova] ${msg}`, ...extras);
+  }
+}
+
 export const NovaProvider: React.FC<NovaProviderProps> = ({
   children,
   config,
@@ -351,34 +313,18 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   const registry = config.registry;
   const defaultExperiences: NovaExperiences = {};
 
-  for (const [experienceName, experienceData] of Object.entries(
-    registry.experiences
-  )) {
-    const defaultExperienceObjects: {
-      [objectName: string]: NovaObject;
-    } = {};
+  for (const [experienceName, experienceData] of Object.entries(registry.experiences)) {
+    const defaultExperienceObjects: { [objectName: string]: NovaObject } = {};
 
-    for (const [objectName, objectEnabled] of Object.entries(
-      experienceData.objects
-    )) {
-      if (!objectEnabled) {
-        continue;
-      }
-
+    for (const [objectName, objectEnabled] of Object.entries(experienceData.objects)) {
+      if (!objectEnabled) continue;
       const objectData = registry.objects[objectName];
-
-      if (!objectData) {
-        continue;
-      }
-
+      if (!objectData) continue;
       const objectKeys = objectData.keys;
-
       const defaultObjectConfig: NovaObjectConfig = {};
-
       for (const [keyName, keyData] of Object.entries(objectKeys)) {
         defaultObjectConfig[keyName] = keyData.default;
       }
-
       defaultExperienceObjects[objectName] = {
         variantName: null,
         config: defaultObjectConfig,
@@ -392,7 +338,9 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       isLoaded: false,
     };
 
-    console.log(`[Nova SDK] Registry defaults for "${experienceName}":`, JSON.stringify(defaultExperienceObjects, null, 2));
+    log(
+      `Defaults for "${experienceName}": ${Object.keys(defaultExperienceObjects).length} objects`
+    );
   }
 
   const initialState: NovaState = {
@@ -536,16 +484,13 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         `${state.config.apiEndpoint}/api/v1/users/create-user/`,
         {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${state.config.apiKey}`,
-          },
+          headers: { Authorization: `Bearer ${state.config.apiKey}` },
           body: JSON.stringify({
             user_id: user.userId,
             user_profile: user.userProfile,
           }),
         }
       );
-
       return {
         userId: user.userId,
         userProfile: user.userProfile,
@@ -562,7 +507,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       const anonymousId = state.anonymousId;
 
       if (!anonymousId) {
-        // No anonymous session — fall back to plain create
         const novaUser = await createUser({
           userId,
           userProfile: userProfile ?? {},
@@ -571,7 +515,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         return;
       }
 
-      // Flush pending events so they are sent with the anonymous ID
       await flushEvents();
 
       const identifyResponse = await callApi<IdentifyResponse>(
@@ -647,7 +590,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         throw new Error("User must be set before loading experiences");
       }
 
-      // Cache payload for SSE-triggered reloads
       if (options?.payload) {
         payloadCacheRef.current.set(experienceName, options.payload);
       }
@@ -656,8 +598,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
-        console.log(`[Nova SDK] loadExperience("${experienceName}") — requesting for user:`, effectiveUserId);
-
+        log(`Loading: "${experienceName}" (user: ${effectiveUserId})`);
         const requestBody: Record<string, any> = {
           user_id: effectiveUserId,
           experience_name: experienceName,
@@ -666,7 +607,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         if (cachedPayload) {
           requestBody.payload = cachedPayload;
         }
-
         const data = await callApi<NovaExperienceResponse>(
           `${state.config.apiEndpoint}/api/v1/user-experience/get-experience/`,
           {
@@ -678,15 +618,19 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           }
         );
 
-        console.log(`[Nova SDK] loadExperience("${experienceName}") — raw API response:`, JSON.stringify(data, null, 2));
+        log(
+          `Loaded "${experienceName}":`,
+          {
+            personalisation: data.personalisation_name ?? "none",
+            reason: data.evaluation_reason,
+            features: Object.keys(data.features).join(", "),
+          }
+        );
 
         const experienceObjects: { [objectName: string]: NovaObject } = {};
         const registryDefaults = defaultExperiences[experienceName]?.objects ?? {};
 
-        for (const [featureName, featureData] of Object.entries(
-          data.features
-        )) {
-          // Merge: registry defaults ← API response (variant overrides win)
+        for (const [featureName, featureData] of Object.entries(data.features)) {
           const defaultConfig = registryDefaults[featureName]?.config ?? {};
           experienceObjects[featureName] = {
             variantName: featureData.variant_name,
@@ -702,16 +646,9 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           objects: experienceObjects,
         };
 
-        console.log(`[Nova SDK] loadExperience("${experienceName}") — evaluated result:`, {
-          personalisation: data?.personalisation_name ?? "none (defaults)",
-          reason: data?.evaluation_reason,
-          objects: Object.fromEntries(
-            Object.entries(experienceObjects).map(([name, obj]) => [
-              name,
-              { variant: obj.variantName ?? "default", config: obj.config },
-            ])
-          ),
-        });
+        log(
+          `Eval result "${experienceName}": p="${data?.personalisation_name ?? "none"}" r="${data?.evaluation_reason}" (${Object.keys(experienceObjects).length} features)`
+        );
 
         dispatch({
           type: "SET_EXPERIENCE",
@@ -726,7 +663,7 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         setError(
           `Failed to load experience "${experienceName}": ${errorMessage}`
         );
-
+        log(`Failed to load "${experienceName}": ${errorMessage}`);
         throw error;
       } finally {
         setLoading(false);
@@ -742,7 +679,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         throw new Error("User must be set before loading experiences");
       }
 
-      // Cache payload for all requested experiences (used by SSE-triggered reloads)
       if (options?.payload && experienceNames) {
         for (const name of experienceNames) {
           payloadCacheRef.current.set(name, options.payload);
@@ -753,17 +689,17 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       setError(null);
 
       try {
-        console.log(`[Nova SDK] loadExperiences(${experienceNames ? JSON.stringify(experienceNames) : "all"}) — requesting for user:`, effectiveUserId);
+        log(
+          `Loading batch: ${experienceNames ? experienceNames.join(", ") : "all"} (user: ${effectiveUserId})`
+        );
 
         const requestBody: Record<string, any> = {
           user_id: effectiveUserId,
           experience_names: experienceNames,
         };
-        // Use explicit payload if provided, otherwise merge cached payloads
         if (options?.payload) {
           requestBody.payload = options.payload;
         } else if (experienceNames) {
-          // Build merged payload from cache for SSE-triggered reloads
           const merged: Record<string, any> = {};
           let hasPayload = false;
           for (const name of experienceNames) {
@@ -789,11 +725,11 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           }
         );
 
-        console.log(`[Nova SDK] loadExperiences — raw API response:`, JSON.stringify(data, null, 2));
+        log(
+          `Batch loaded: ${Object.keys(data).length} experiences`
+        );
 
-        // Map GetExperiencesResponse to NovaExperiences
         const novaExperiences: NovaExperiences = {};
-
         for (const [experienceName, experienceData] of Object.entries(data)) {
           const experienceObjects: { [objectName: string]: NovaObject } = {};
           const registryDefaults = defaultExperiences[experienceName]?.objects ?? {};
@@ -801,7 +737,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
           for (const [featureName, featureData] of Object.entries(
             experienceData.features
           )) {
-            // Merge: registry defaults ← API response (variant overrides win)
             const defaultConfig = registryDefaults[featureName]?.config ?? {};
             experienceObjects[featureName] = {
               variantName: featureData.variant_name,
@@ -819,16 +754,9 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
 
           novaExperiences[experienceName] = novaExperience;
 
-          console.log(`[Nova SDK] loadExperiences — "${experienceName}" evaluated:`, {
-            personalisation: experienceData.personalisation_name ?? "none (defaults)",
-            reason: experienceData.evaluation_reason,
-            objects: Object.fromEntries(
-              Object.entries(experienceObjects).map(([name, obj]) => [
-                name,
-                { variant: obj.variantName ?? "default", config: obj.config },
-              ])
-            ),
-          });
+          log(
+            `"${experienceName}": p="${experienceData.personalisation_name ?? "none"}" r="${experienceData.evaluation_reason}" (${Object.keys(experienceObjects).length} features)`
+          );
         }
 
         dispatch({
@@ -843,7 +771,9 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
             experienceNames ? experienceNames.join(", ") : "all"
           }": ${errorMessage}`
         );
-
+        log(
+          `Failed to load experiences: ${experienceNames ? experienceNames.join(", ") : "all"}: ${errorMessage}`
+        );
         throw error;
       } finally {
         setLoading(false);
@@ -856,7 +786,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     await loadExperiences(null);
   }, [loadExperiences]);
 
-  // Experience get methods
   const isExperienceLoaded = useCallback(
     (experienceName: string) => {
       return state.experiences[experienceName]?.isLoaded || false;
@@ -867,17 +796,11 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   const readExperience = useCallback(
     <T extends Record<string, any>>(experienceName: string) => {
       const experience = state.experiences[experienceName];
-
-      if (!experience) {
-        return null;
-      }
-
+      if (!experience) return null;
       const experienceFeatures: { [objectName: string]: NovaObjectConfig } = {};
-
       for (const [objectName, object] of Object.entries(experience.objects)) {
         experienceFeatures[objectName] = object.config;
       }
-
       return experienceFeatures as T;
     },
     [state.experiences]
@@ -888,7 +811,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       if (!isExperienceLoaded(experienceName)) {
         await loadExperience(experienceName, options);
       }
-
       return readExperience<T>(experienceName);
     },
     [state.experiences, isExperienceLoaded, loadExperience, readExperience]
@@ -901,7 +823,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     const names = subscribedNamesRef.current;
     if (!noticeUrl || names.size === 0) return;
 
-    // Abort previous connection
     sseAbortRef.current?.abort();
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -916,10 +837,10 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       `?experience_names=${encodeURIComponent(Array.from(names).join(","))}` +
       `&token=${encodeURIComponent(state.config.apiKey)}`;
 
-    console.log(`[Nova SDK] SSE connecting to notice service, watching ${names.size} experience(s)`);
+    log(
+      `SSE connecting, watching: ${Array.from(names).join(", ")}`
+    );
 
-    // Use XMLHttpRequest instead of fetch — React Native's fetch does NOT
-    // support streaming ReadableStream, but XHR's onprogress fires incrementally.
     const xhr = new XMLHttpRequest();
     let seenBytes = 0;
     let buffer = "";
@@ -932,14 +853,13 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       for (const frame of frames) {
         let eventType = "";
         let eventData = "";
-
         for (const line of frame.split("\n")) {
           if (line.startsWith("event: ")) eventType = line.slice(7);
           else if (line.startsWith("data: ")) eventData = line.slice(6);
         }
 
         if (eventType === "connected") {
-          console.log("[Nova SDK] SSE connected");
+          log(`SSE connected`); // crisp
           reconnectAttemptRef.current = 0;
           const subNames = Array.from(subscribedNamesRef.current);
           if (subNames.length > 0) {
@@ -953,14 +873,13 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
               subscribedNamesRef.current.has(id)
             );
             if (toReload.length > 0) {
-              console.log(`[Nova SDK] SSE push — reloading ${toReload.length} experience(s)`);
+              log(`SSE update. Reloading: ${toReload.join(", ")}`);
               loadExperiences(toReload).catch(() => {});
             }
           } catch {
             // Malformed data, ignore
           }
         }
-        // heartbeat — ignore
       }
     };
 
@@ -978,23 +897,21 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       if (abort.signal.aborted || subscribedNamesRef.current.size === 0) return;
       const attempt = reconnectAttemptRef.current++;
       const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
-      console.log(`[Nova SDK] SSE reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+      log(`SSE reconnecting in ${delay}ms (attempt ${attempt + 1})`);
       reconnectTimerRef.current = setTimeout(connectSSE, delay);
     };
 
     xhr.onerror = () => {
       if (abort.signal.aborted) return;
-      console.warn("[Nova SDK] SSE connection error");
+      log("SSE connection error");
       scheduleReconnect();
     };
 
     xhr.onloadend = () => {
       if (abort.signal.aborted) return;
-      // Connection closed by server — reconnect
       scheduleReconnect();
     };
 
-    // Wire up abort to cancel XHR
     abort.signal.addEventListener("abort", () => xhr.abort());
 
     xhr.send();
@@ -1008,7 +925,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
         names.add(name);
       }
       if (names.size !== before) {
-        // Set changed — reconnect to update server-side filter
         connectSSE();
       }
     },
@@ -1024,7 +940,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       }
       if (names.size !== before) {
         if (names.size === 0) {
-          // No more subscriptions — disconnect
           sseAbortRef.current?.abort();
           sseAbortRef.current = null;
           if (reconnectTimerRef.current) {
@@ -1032,7 +947,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
             reconnectTimerRef.current = null;
           }
         } else {
-          // Set changed — reconnect to update server-side filter
           connectSSE();
         }
       }
@@ -1040,7 +954,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     [connectSSE]
   );
 
-  // Cleanup SSE on unmount
   useEffect(() => {
     return () => {
       sseAbortRef.current?.abort();
@@ -1050,7 +963,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
     };
   }, []);
 
-  // Flush on interval
   useEffect(() => {
     flushTimerRef.current = setInterval(() => {
       flushEvents();
@@ -1060,7 +972,6 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
       if (flushTimerRef.current) {
         clearInterval(flushTimerRef.current);
       }
-      // Flush remaining events on unmount
       flushEvents();
     };
   }, [flushEvents, batchFlushInterval]);
@@ -1068,10 +979,8 @@ export const NovaProvider: React.FC<NovaProviderProps> = ({
   const value: NovaContextValue = {
     state,
     dispatch,
-
     setLoading,
     setError,
-
     setUser,
     identify,
     updateUserProfile,
